@@ -74,5 +74,47 @@ const vm = require('node:vm');
       assert.equal(cs, best, 'DP must pick min-overshoot subset: ' + JSON.stringify(list));
     }
   }
-  console.log('PASS walk threshold DP: defer / exact / min-overshoot / off / random 200 cases');
+
+  // 11) 最低收取（floor）：不够门槛但够 floor → 目标降为 floor，仍最小溢出
+  //     [700, 350] 总和 1050 < 2000，但 ≥ 300 → 收 DP 选出的 ≥300 最小子集（350）
+  assert.equal(sum(sel(balls([700, 350]), 2000, 300)), 350);
+  //     [320] 单球刚好过 floor
+  assert.equal(sum(sel(balls([320]), 2000, 300)), 320);
+  //     刚好凑成 floor：[150,150] → 300
+  assert.equal(sum(sel(balls([150, 150]), 2000, 300)), 300);
+
+  // 12) floor 也没到 → 仍然延后（一个不领）
+  assert.deepEqual(valsOf(sel(balls([100, 150]), 2000, 300)), []);
+  assert.deepEqual(valsOf(sel(balls([299]), 2000, 300)), []);
+
+  // 13) 够门槛时 floor 不参与（目标仍是门槛）
+  assert.equal(sum(sel(balls([1000, 1000, 200]), 2000, 300)), 2000);
+
+  // 14) floor=0 → 退回纯门槛行为（不够门槛就全延后）
+  assert.deepEqual(valsOf(sel(balls([700, 350]), 2000, 0)), []);
+
+  // 15) 随机对照：floor 生效时 DP 仍选「目标的最小上界」子集
+  for (let t = 0; t < 200; t++) {
+    const rnd = rng(t + 101);
+    const n = 2 + Math.floor(rnd() * 8);
+    const list = [];
+    for (let i = 0; i < n; i++) list.push({ id: 'y' + i, val: Math.floor(rnd() * 900) + 20 });
+    const total = sum(list);
+    const chosen = sel(list, 2000, 300);
+    const target = total >= 2000 ? 2000 : (total >= 300 ? 300 : 0);
+    if (!target) {
+      assert.equal(chosen.length, 0, 'below floor must defer all: ' + JSON.stringify(list));
+    } else {
+      const cs = sum(chosen);
+      assert.ok(cs >= target, 'chosen must reach target ' + target + ': ' + JSON.stringify(list));
+      let best = Infinity;
+      for (let mask = 1; mask < (1 << n); mask++) {
+        let s = 0;
+        for (let i = 0; i < n; i++) if (mask & (1 << i)) s += list[i].val;
+        if (s >= target && s < best) best = s;
+      }
+      assert.equal(cs, best, 'DP must pick min-overshoot vs target ' + target + ': ' + JSON.stringify(list));
+    }
+  }
+  console.log('PASS walk threshold DP: defer / exact / min-overshoot / floor / off / random 400 cases');
 })().catch((e) => { console.error(e); process.exit(1); });

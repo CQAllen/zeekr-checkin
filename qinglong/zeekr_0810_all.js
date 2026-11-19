@@ -2,7 +2,7 @@
 new Env("极氪签到·早间场");
 cron: 10 8 * * *
 10 8 * * * zeekr_0810_all.js
-青龙订阅适配 v3.3.5；默认时区 UTC+8。
+青龙订阅适配 v3.3.6；默认时区 UTC+8。
 生成文件，请勿直接修改；时间在青龙定时任务中编辑。
 */
 /**
@@ -27,6 +27,9 @@ cron: 10 8 * * *
  *      ZEEKR_WALK_THRESHOLD = 2000      ← 可选；减碳能量球门槛(g)：可领球总和未达此值不领，
  *                                          达到则按子集和 DP 选最小溢出的子集领取。默认 2000；
  *                                          0/off = 关闭，退回「全部领取」。
+ *      ZEEKR_WALK_MIN = 300             ← 可选；每日最低收取(g)：可领总和不够门槛但已达此值时，
+ *                                          也收取够此值的最小子集（保住 Z-Green 每日活跃度）。
+ *                                          默认 300；0 = 关闭，只看门槛。
  *      ZEEKR_NOTIFY= 0                  ← 可选，关闭通知
  *      ZEEKR_NICKNAME_1 = 家用车        ← 可选，TOKEN_1 / VAL_1 对应的通知昵称
  *      ZEEKR_NICKNAMES = ["家用车","通勤"] ← 可选，JSON 数组按账号执行顺序匹配
@@ -53,7 +56,7 @@ var ZEEKR_QL_SCHEDULE = {"mode": "all", "tag": "早间场"};
  * 依赖注入：RT = { platform, env, http(), notify(), log(), finish() }
  * ========================================================================== */
 
-var ZEEKR_PORT_VERSION = "3.3.5";
+var ZEEKR_PORT_VERSION = "3.3.6";
 /* 签名密钥由 build.py 从本地 checkin.mjs 抽取后注入（避免密钥出现在源码/终端里被安全屏蔽器打码） */
 var ZEEKR_SECRET = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCz09z6e9WOcNq+nUMX8Vq1Xe2EmJxuR3XbturefioF)E(Fl";
 var ZEEKR_BASE = "https://api-gw-toc.zeekrlife.com";
@@ -485,6 +488,9 @@ function zeekrLoadConfig(RT) {
     // 减碳能量球门槛（g）：可领球总和未达此值则一个都不领；达到则按子集和 DP
     // 选最小溢出的子集领取。默认 2000；0/off = 关闭，退回「全部领取」旧行为。
     walkThreshold: parseInt(str("WALKTHRESHOLD", "2000"), 10) || 0,
+    // 每日最低收取（g）：不够 2000 门槛但可领总和已达此值时，也按 DP 收取够此值
+    // 的最小子集，保住 Z-Green 每日活跃度。默认 300；0 = 关闭，只看门槛。
+    walkMin: parseInt(str("WALKMIN", "300"), 10) || 0,
     notify: str("NOTIFY", "1") !== "0",
     verbose: str("VERBOSE", "0") === "1",
   };
@@ -1077,18 +1083,22 @@ async function zeekrClaimSevenDayLottery(ctx, lotteryList) {
 /**
  * 按门槛选取要领取的减碳能量球（子集和 DP，最小溢出）。
  *
- *   threshold <= 0          → 退回旧行为：返回全部（交给 zeekrClaimWalk 逐个领）。
- *   可领球总和 < threshold   → 返回 []（一个都不领，等积累够了再领）。
- *   否则                     → 在所有「和 ≥ threshold」的子集里，选总和最接近 threshold
- *                             的那一组，只领这组，其余留着不领。
+ *   threshold <= 0            → 退回旧行为：返回全部（交给 zeekrClaimWalk 逐个领）。
+ *   可领球总和 ≥ threshold     → 目标取 threshold。
+ *   threshold > 总和 ≥ floor   → 目标取 floor（Z-Green 活跃度的每日最低收取，
+ *                               不够 2000 门槛也要保住当日活跃度）。
+ *   总和 < floor（或 floor=0 且总和 < threshold）
+ *                             → 返回 []（一个都不领，等积累够了再领）。
+ *   选定目标后：在所有「和 ≥ 目标」的子集里，选总和最接近目标的那一组，只领这组。
  *
  * 纯函数（不碰 ctx/网络），便于在 vm 里直接单测；球对象只读 .val。
  */
-function zeekrSelectWalkBalls(list, threshold) {
+function zeekrSelectWalkBalls(list, threshold, floor) {
   if (!list || !list.length) return [];
   /* 阈值统一归一化为整数（cfg 已 parseInt，但纯函数对字符串调用也稳），
      NaN/'off'/0 → 0 → 视为「关闭门槛」，退回全部领取。 */
   threshold = parseInt(threshold, 10) || 0;
+  floor = parseInt(floor, 10) || 0;
   if (threshold <= 0) return list.slice();
   // 只让 val>0 的球参与选取；0 值球无贡献，「最小收取」时不领。
   var vals = [], map = [];
@@ -1100,11 +1110,14 @@ function zeekrSelectWalkBalls(list, threshold) {
   if (!n) return [];
   var total = 0, maxVal = 0;
   for (var k = 0; k < n; k++) { total += vals[k]; if (vals[k] > maxVal) maxVal = vals[k]; }
-  if (total < threshold) return [];            // 没到门槛：整批延后
-  // DP 上界：最优解 ≤ threshold + maxVal（降序贪心必给一个 ≤ 此值的可行解），
+  /* 目标：够门槛用门槛；不够门槛但够最低收取用最低收取（Z-Green 活跃度）；都不够延后。 */
+  var target = threshold;
+  if (total < threshold && floor > 0 && total >= floor) target = floor;
+  if (total < target) return [];               // 最低目标也没到：整批延后
+  // DP 上界：最优解 ≤ target + maxVal（降序贪心必给一个 ≤ 此值的可行解），
   // 再用 total 兜住，避免开大数组。
-  var cap = Math.min(total, threshold + maxVal);
-  if (cap > 200000) return zeekrGreedyWalkBalls(list, threshold); // 球值异常大时兜底
+  var cap = Math.min(total, target + maxVal);
+  if (cap > 200000) return zeekrGreedyWalkBalls(list, target); // 球值异常大时兜底
   // reachable[s]=某子集能否恰好凑到 s；prev[s]=最后加入的球在 vals 里的下标（回溯用）。
   // 0/1 背包：每个球只取一次，s 自上而下遍历防止重复使用同一球。
   var reachable = new Array(cap + 1), prev = new Array(cap + 1);
@@ -1116,10 +1129,10 @@ function zeekrSelectWalkBalls(list, threshold) {
       if (!reachable[s2] && reachable[s2 - v]) { reachable[s2] = true; prev[s2] = bi; }
     }
   }
-  // 找 ≥ threshold 的最小可达和（即最小溢出的子集和）。
+  // 找 ≥ target 的最小可达和（即最小溢出的子集和）。
   var best = -1;
-  for (var s3 = threshold; s3 <= cap; s3++) { if (reachable[s3]) { best = s3; break; } }
-  if (best < 0) return zeekrGreedyWalkBalls(list, threshold);      // 理论上不会到这里
+  for (var s3 = target; s3 <= cap; s3++) { if (reachable[s3]) { best = s3; break; } }
+  if (best < 0) return zeekrGreedyWalkBalls(list, target);        // 理论上不会到这里
   // 回溯选中的球：cur → prev[cur] 指向的球 → cur 减去该球值，bi 严格递减不会重复。
   var chosen = {};
   for (var cur = best; cur > 0;) {
@@ -1274,22 +1287,26 @@ async function zeekrClaimAll(ctx, cfg) {
     var l = fresh(got.lotteryList);
     var elapsed = Date.now() - startedAt;
 
-    /* 减碳能量球门槛贪心：未达门槛的球整批延后——不领、不计重试、不算失败，
-       下一轮 fresh 仍会取到它们（服务端仍未领）。达到门槛则只领子集和 DP 选出
-       的最小溢出子集。阈值 0/off 时 wSel === w，即旧的「全部领取」。 */
-    var wSel = cfg.walkThreshold > 0 ? zeekrSelectWalkBalls(w, cfg.walkThreshold) : w;
+    /* 减碳能量球门槛贪心：目标优先取门槛 2000；不够门槛但够最低收取（Z-Green
+       活跃度）就取最低收取。两个目标都没到才整批延后——不领、不计重试、不算失败，
+       下一轮 fresh 仍会取到它们（服务端仍未领）。够目标则只领子集和 DP 选出的
+       最小溢出子集。阈值 0/off 时 wSel === w，即旧的「全部领取」。 */
+    var wSel = cfg.walkThreshold > 0
+      ? zeekrSelectWalkBalls(w, cfg.walkThreshold, cfg.walkMin)
+      : w;
     var wSum = 0, wSelSum = 0;
     for (var wi = 0; wi < w.length; wi++) wSum += (w[wi] && w[wi].val) || 0;
     for (var wsi = 0; wsi < wSel.length; wsi++) wSelSum += (wSel[wsi] && wSel[wsi].val) || 0;
     if (wSel.length === 0 && w.length > 0) {
-      /* 真没到门槛：整批延后，结尾要给一句诚实说明（避免通知写「无待领取」）。 */
+      /* 最低目标也没到：整批延后，结尾要给一句诚实说明（避免通知写「无待领取」）。 */
+      var wFloor = cfg.walkMin > 0 ? "最低 " + cfg.walkMin + "g" : "门槛 " + cfg.walkThreshold + "g";
       ctx.vlog(
         "⏳ 减碳能量球 " + w.length + " 个共 " + wSum +
-        "g 未达门槛 " + cfg.walkThreshold + "g，本轮延后"
+        "g 未达" + wFloor + "，本轮延后"
       );
       deferredNote =
         "减碳能量球 " + w.length + " 个共 " + wSum +
-        "g 未达 " + cfg.walkThreshold + "g 门槛，未领取";
+        "g 未达" + wFloor + "，未领取";
     } else if (wSel.length > 0 && wSel.length < w.length) {
       /* 已达标：只领了最小溢出子集，剩下的是故意不领的溢出球——只记明细，不进通知。 */
       ctx.vlog(
