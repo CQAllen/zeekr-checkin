@@ -17,7 +17,7 @@
  * 3) 参数：MODE=all|sign|claim  POLL=0|1  WAITS=45,60,75  SETTLE=180  MAX=600
  *          STEPS=10000|off    TAG=凌晨场    LIKE=1    NOTIFY=0    CAPSHOW=0    VERBOSE=1
  *          WALKTHRESHOLD=2000  减碳能量球门槛(g)：未达不领，达到则贪心最小溢出收取；0=全领
- *          WALKMIN=300  每日最低收取(g)：不够门槛但够此值也收（保 Z-Green 活跃度）；0=只看门槛
+ *          WALKMIN=300  每日最低收取(g)，默认关：开启后不够门槛但够此值也收（保 Z-Green 活跃度）
  *          前缀 ZEEKR_ 可有可无，大小写不敏感
  *
  * ── 为什么默认「只查一轮」────────────────────────────────────────────
@@ -46,7 +46,7 @@ var ZEEKR_DEFAULT_CONFIG = {
  * 依赖注入：RT = { platform, env, http(), notify(), log(), finish() }
  * ========================================================================== */
 
-var ZEEKR_PORT_VERSION = "3.3.6";
+var ZEEKR_PORT_VERSION = "3.3.7";
 /* 签名密钥由 build.py 从本地 checkin.mjs 抽取后注入（避免密钥出现在源码/终端里被安全屏蔽器打码） */
 var ZEEKR_SECRET = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCz09z6e9WOcNq+nUMX8Vq1Xe2EmJxuR3XbturefioF)E(Fl";
 var ZEEKR_BASE = "https://api-gw-toc.zeekrlife.com";
@@ -479,8 +479,8 @@ function zeekrLoadConfig(RT) {
     // 选最小溢出的子集领取。默认 2000；0/off = 关闭，退回「全部领取」旧行为。
     walkThreshold: parseInt(str("WALKTHRESHOLD", "2000"), 10) || 0,
     // 每日最低收取（g）：不够 2000 门槛但可领总和已达此值时，也按 DP 收取够此值
-    // 的最小子集，保住 Z-Green 每日活跃度。默认 300；0 = 关闭，只看门槛。
-    walkMin: parseInt(str("WALKMIN", "300"), 10) || 0,
+    // 的最小子集，保住 Z-Green 每日活跃度。默认关闭（0），只看门槛；按需设 300 开启。
+    walkMin: parseInt(str("WALKMIN", "0"), 10) || 0,
     notify: str("NOTIFY", "1") !== "0",
     verbose: str("VERBOSE", "0") === "1",
   };

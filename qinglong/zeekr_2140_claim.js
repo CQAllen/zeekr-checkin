@@ -2,7 +2,7 @@
 new Env("极氪签到·晚间补领");
 cron: 40 21 * * *
 40 21 * * * zeekr_2140_claim.js
-青龙订阅适配 v3.3.6；默认时区 UTC+8。
+青龙订阅适配 v3.3.7；默认时区 UTC+8。
 生成文件，请勿直接修改；时间在青龙定时任务中编辑。
 */
 /**
@@ -27,9 +27,9 @@ cron: 40 21 * * *
  *      ZEEKR_WALK_THRESHOLD = 2000      ← 可选；减碳能量球门槛(g)：可领球总和未达此值不领，
  *                                          达到则按子集和 DP 选最小溢出的子集领取。默认 2000；
  *                                          0/off = 关闭，退回「全部领取」。
- *      ZEEKR_WALK_MIN = 300             ← 可选；每日最低收取(g)：可领总和不够门槛但已达此值时，
- *                                          也收取够此值的最小子集（保住 Z-Green 每日活跃度）。
- *                                          默认 300；0 = 关闭，只看门槛。
+ *      ZEEKR_WALK_MIN = 300             ← 可选；每日最低收取(g)，默认关闭：开启后可领总和不够
+ *                                          门槛但已达此值时，也收取够此值的最小子集（保住
+ *                                          Z-Green 每日活跃度）。0 = 关闭，只看门槛。
  *      ZEEKR_NOTIFY= 0                  ← 可选，关闭通知
  *      ZEEKR_NICKNAME_1 = 家用车        ← 可选，TOKEN_1 / VAL_1 对应的通知昵称
  *      ZEEKR_NICKNAMES = ["家用车","通勤"] ← 可选，JSON 数组按账号执行顺序匹配
@@ -56,7 +56,7 @@ var ZEEKR_QL_SCHEDULE = {"mode": "claim", "tag": "晚间场·补领"};
  * 依赖注入：RT = { platform, env, http(), notify(), log(), finish() }
  * ========================================================================== */
 
-var ZEEKR_PORT_VERSION = "3.3.6";
+var ZEEKR_PORT_VERSION = "3.3.7";
 /* 签名密钥由 build.py 从本地 checkin.mjs 抽取后注入（避免密钥出现在源码/终端里被安全屏蔽器打码） */
 var ZEEKR_SECRET = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCz09z6e9WOcNq+nUMX8Vq1Xe2EmJxuR3XbturefioF)E(Fl";
 var ZEEKR_BASE = "https://api-gw-toc.zeekrlife.com";
@@ -489,8 +489,8 @@ function zeekrLoadConfig(RT) {
     // 选最小溢出的子集领取。默认 2000；0/off = 关闭，退回「全部领取」旧行为。
     walkThreshold: parseInt(str("WALKTHRESHOLD", "2000"), 10) || 0,
     // 每日最低收取（g）：不够 2000 门槛但可领总和已达此值时，也按 DP 收取够此值
-    // 的最小子集，保住 Z-Green 每日活跃度。默认 300；0 = 关闭，只看门槛。
-    walkMin: parseInt(str("WALKMIN", "300"), 10) || 0,
+    // 的最小子集，保住 Z-Green 每日活跃度。默认关闭（0），只看门槛；按需设 300 开启。
+    walkMin: parseInt(str("WALKMIN", "0"), 10) || 0,
     notify: str("NOTIFY", "1") !== "0",
     verbose: str("VERBOSE", "0") === "1",
   };

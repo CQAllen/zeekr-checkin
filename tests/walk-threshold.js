@@ -116,5 +116,12 @@ const vm = require('node:vm');
       assert.equal(cs, best, 'DP must pick min-overshoot vs target ' + target + ': ' + JSON.stringify(list));
     }
   }
+  // 16) cfg 默认：WALKMIN 默认 0（关闭），WALKTHRESHOLD 默认 2000
+  const c0 = ctx.zeekrLoadConfig({env: {}});
+  assert.equal(c0.walkMin, 0, 'WALKMIN must default to 0 (off)');
+  assert.equal(c0.walkThreshold, 2000, 'WALKTHRESHOLD must default to 2000');
+  const c1 = ctx.zeekrLoadConfig({env: {ZEEKR_WALK_MIN: '300'}});
+  assert.equal(c1.walkMin, 300, 'ZEEKR_WALK_MIN=300 parses');
+
   console.log('PASS walk threshold DP: defer / exact / min-overshoot / floor / off / random 400 cases');
 })().catch((e) => { console.error(e); process.exit(1); });
